@@ -425,8 +425,15 @@ export default function CardFreeze() {
   const wipeCountRef  = useRef(0)
   const wipeDoneRef   = useRef(false)
 
-  // ── Defrost audio refs ────────────────────────────────
-  const audioRef = useRef<HTMLAudioElement | null>(null)
+  // ── Defrost audio — Web Audio API (velocity-driven gain) ─
+  // Same approach as the original: a looping BufferSource always playing;
+  // gain is modulated by wipe speed so sound is instant on every stroke.
+  const actxRef      = useRef<AudioContext | null>(null)
+  const gainRef      = useRef<GainNode | null>(null)
+  const bufferRef    = useRef<AudioBuffer | null>(null)
+  const sourceRef    = useRef<AudioBufferSourceNode | null>(null)
+  const velRef       = useRef(0)          // current smoothed velocity
+  const lastPtRef    = useRef<{x:number;y:number} | null>(null)
 
   const reduced    = useReducedMotion()
 
@@ -486,48 +493,84 @@ export default function CardFreeze() {
     setWipeCanvas(canvas)
   }, [breaking])
 
-  // ── Defrost audio ────────────────────────────────────
-  // ── Defrost audio ────────────────────────────────────
-  // Global pointerdown starts the sound (pointerdown IS a valid autoplay gesture;
-  // pointermove is NOT — that's why in-move play() was silently rejected).
-  // Global pointerup/cancel stops it. Both bypass CSS pointer-events entirely.
+  // ── Defrost audio — Web Audio API ────────────────────
+  // Bootstrap AudioContext + load buffer on first pointerdown.
+  // Start loop source when breaking begins, stop when done.
+  useEffect(() => {
+    // On first user gesture, create AudioContext and load buffer
+    const bootstrap = async () => {
+      if (actxRef.current) return
+      const ActxClass = window.AudioContext ?? (window as unknown as {webkitAudioContext: typeof AudioContext}).webkitAudioContext
+      if (!ActxClass) return
+      const actx = new ActxClass()
+      actxRef.current = actx
+      const gain = actx.createGain()
+      gain.gain.value = 0
+      gain.connect(actx.destination)
+      gainRef.current = gain
+      try {
+        const res  = await fetch('/defrost.wav')
+        const ab   = await res.arrayBuffer()
+        bufferRef.current = await actx.decodeAudioData(ab)
+      } catch { /* silently ignore */ }
+    }
+    document.addEventListener('pointerdown', bootstrap, { once: true })
+    return () => document.removeEventListener('pointerdown', bootstrap)
+  }, [])
+
   useEffect(() => {
     if (!breaking) {
-      if (audioRef.current) {
-        audioRef.current.pause()
-        audioRef.current.currentTime = 0
-        audioRef.current = null
-      }
+      // Fade gain to 0 and stop source
+      const actx = actxRef.current
+      const gain = gainRef.current
+      if (actx && gain) gain.gain.setTargetAtTime(0, actx.currentTime, 0.05)
+      sourceRef.current?.stop()
+      sourceRef.current = null
+      velRef.current   = 0
+      lastPtRef.current = null
       return
     }
 
-    const audio = new Audio('/defrost.wav')
-    audio.volume  = 0.72
-    audio.preload = 'auto'
-    audioRef.current = audio
-
-    const start = () => {
-      // Reset to beginning every wipe so each stroke plays fresh
-      audio.currentTime = 0
-      audio.play().catch(() => {})
-    }
-    const stop = () => {
-      if (!audio.paused) {
-        audio.pause()
-        audio.currentTime = 0
-      }
+    // Start looping source through gain node
+    const startSource = () => {
+      const actx   = actxRef.current
+      const gain   = gainRef.current
+      const buffer = bufferRef.current
+      if (!actx || !gain || !buffer) return
+      if (sourceRef.current) return   // already running
+      const src = actx.createBufferSource()
+      src.buffer = buffer
+      src.loop   = true
+      src.connect(gain)
+      src.start()
+      sourceRef.current = src
     }
 
-    document.addEventListener('pointerdown',   start)
-    document.addEventListener('pointerup',     stop)
-    document.addEventListener('pointercancel', stop)
+    // pointerdown → resume context (autoplay policy) + ensure source running
+    const onDown = (e: PointerEvent) => {
+      lastPtRef.current = { x: e.clientX, y: e.clientY }
+      velRef.current = 0
+      const actx = actxRef.current
+      if (!actx) return
+      const resume = actx.state === 'suspended' ? actx.resume() : Promise.resolve()
+      resume.then(startSource)
+    }
+    const onUp = () => {
+      velRef.current = 0
+      const actx = actxRef.current
+      const gain = gainRef.current
+      if (actx && gain) gain.gain.setTargetAtTime(0, actx.currentTime, 0.04)
+      lastPtRef.current = null
+    }
+
+    document.addEventListener('pointerdown',   onDown)
+    document.addEventListener('pointerup',     onUp)
+    document.addEventListener('pointercancel', onUp)
 
     return () => {
-      document.removeEventListener('pointerdown',   start)
-      document.removeEventListener('pointerup',     stop)
-      document.removeEventListener('pointercancel', stop)
-      audio.pause()
-      audioRef.current = null
+      document.removeEventListener('pointerdown',   onDown)
+      document.removeEventListener('pointerup',     onUp)
+      document.removeEventListener('pointercancel', onUp)
     }
   }, [breaking])
 
@@ -553,6 +596,23 @@ export default function CardFreeze() {
     ctx.arc(cx, cy, WIPE_BRUSH_R, 0, Math.PI * 2)
     ctx.fill()
 
+    // ── Drive audio gain by pointer velocity ─────────────
+    const actx = actxRef.current
+    const gain = gainRef.current
+    if (actx && gain) {
+      const last = lastPtRef.current
+      const px = e.clientX, py = e.clientY
+      if (last) {
+        const dist = Math.hypot(px - last.x, py - last.y)
+        // Smooth velocity toward new sample (0.95 smoothing)
+        velRef.current = velRef.current * 0.6 + dist * 0.4
+        // Map velocity to gain: clamp 0–1, target with short time-constant
+        const target = Math.min(velRef.current * 0.055, 1.0)
+        gain.gain.setTargetAtTime(target, actx.currentTime, 0.025)
+      }
+      lastPtRef.current = { x: px, y: py }
+    }
+
     // Check coverage every 8 strokes
     wipeCountRef.current++
     if (wipeCountRef.current % 8 === 0) {
@@ -565,10 +625,8 @@ export default function CardFreeze() {
       const coverage = white / (W * H)
       if (coverage >= WIPE_THRESHOLD && !wipeDoneRef.current) {
         wipeDoneRef.current = true
-        if (audioRef.current) {
-          audioRef.current.pause()
-          audioRef.current.currentTime = 0
-        }
+        // Fade audio out
+        if (actx && gain) gain.gain.setTargetAtTime(0, actx.currentTime, 0.05)
         setTimeout(() => {
           setStage('idle')
           setFrozenCardId(null)

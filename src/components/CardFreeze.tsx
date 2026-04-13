@@ -530,6 +530,7 @@ export default function CardFreeze() {
 
   // ── Paint wipe trail ─────────────────────────────────
   const onWipeMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.buttons === 0) return  // only paint while pointer is pressed
     const ctx = wipeCtxRef.current
     if (!ctx || wipeDoneRef.current) return
 

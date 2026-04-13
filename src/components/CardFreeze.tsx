@@ -428,6 +428,8 @@ export default function CardFreeze() {
   // ── Defrost audio refs ────────────────────────────────
   const audioRef = useRef<HTMLAudioElement | null>(null)
 
+  const reduced    = useReducedMotion()
+
   const idle       = stage === 'idle'
   const freezing   = stage === 'freezing'
   const frozen     = stage === 'frozen'
@@ -652,8 +654,7 @@ export default function CardFreeze() {
         </div>
 
         {/* ── Nav arrows — outside card area, siblings of card stack ── */}
-        {/* 44×44 touch target centred at same visual position as the old 32×32 */}
-        {([{ dir: -1 as const, left: 12 }, { dir: 1 as const, left: 334 }] as const).map(({ dir, left }) => (
+        {([{ dir: -1 as const, left: 18 }, { dir: 1 as const, left: 340 }] as const).map(({ dir, left }) => (
           <motion.button
             key={dir}
             aria-label={dir === -1 ? 'Previous card' : 'Next card'}
@@ -664,9 +665,9 @@ export default function CardFreeze() {
             transition={{ type: 'spring', stiffness: 700, damping: 38 }}
             style={{
               position:  'absolute',
-              top:       CENTER_Y - 22,
+              top:       CENTER_Y - 16,
               left,
-              width: 44, height: 44,
+              width: 32, height: 32,
               borderRadius: '50%',
               border:       'none',
               background:   'rgba(255,255,255,0.82)',

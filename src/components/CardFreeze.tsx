@@ -41,7 +41,7 @@
  * ═══════════════════════════════════════════════════════════ */
 
 import {
-  useRef, useState, useCallback, useEffect, useLayoutEffect, useMemo,
+  useRef, useState, useCallback, useEffect, useLayoutEffect,
   type CSSProperties,
   type MouseEvent,
   type PointerEvent as ReactPointerEvent,
@@ -90,216 +90,22 @@ const BASE_LEFT = CENTER_X - CARD_W / 2
 const BASE_TOP  = CENTER_Y - CARD_H / 2
 const SLOTS = [-1, 0, 1] as const
 
-// ─── BREAK CONFIG ─────────────────────────────────────────
-const HITS_TO_BREAK = 3
+// ─── WIPE CONFIG ──────────────────────────────────────────
+// Brush radius on the wipe canvas (card-space pixels, 309×187)
+const WIPE_BRUSH_R = 44
+// Fraction of card pixels that need to be wiped to auto-complete
+const WIPE_THRESHOLD = 0.62
 
-// Hammer cursor — hotspot at the strike tip of the head
-const HAMMER_CURSOR = (() => {
+// Circular brush cursor — dashed ring showing brush size
+const WIPE_CURSOR = (() => {
   const svg = encodeURIComponent(
-    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">` +
-    `<g transform="rotate(-40,16,16)">` +
-    `<rect x="3" y="4" width="26" height="12" rx="3" fill="#1a1a1a"/>` +
-    `<rect x="13" y="14" width="7" height="17" rx="2.5" fill="#a0682d"/>` +
-    `</g></svg>`
+    `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">` +
+    `<circle cx="24" cy="24" r="20" fill="rgba(255,255,255,0.12)" stroke="white" stroke-width="1.5" stroke-dasharray="5 3"/>` +
+    `<circle cx="24" cy="24" r="2.5" fill="white"/>` +
+    `</svg>`
   )
-  return `url("data:image/svg+xml,${svg}") 5 24, crosshair`
+  return `url("data:image/svg+xml,${svg}") 24 24, crosshair`
 })()
-
-// ─── REALISTIC ICE CRACK SYSTEM ───────────────────────────
-
-// Tiny seeded PRNG — deterministic so cracks don't shift on re-render
-function makePRNG(seed: number) {
-  let s = ((seed * 1664525 + 1013904223) >>> 0) | 1
-  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296 }
-}
-
-// Jagged fracture path from (ox, oy) in `angle` direction.
-// Segment lengths vary and the wobble decays toward the tip so it reads more like
-// real stress cracking than a decorative zig-zag.
-function makeArm(
-  ox: number, oy: number,
-  angle: number, len: number, jitter: number, segs: number,
-  rng: () => number,
-): { d: string; pts: [number, number][] } {
-  const dx = Math.cos(angle), dy = Math.sin(angle)
-  const px = -dy,             py =  dx
-  const pts: [number, number][] = [[ox, oy]]
-  let walk = 0
-  for (let i = 1; i <= segs; i++) {
-    const segLen = len * (0.12 + rng() * 0.16)
-    walk = Math.min(len, walk + segLen)
-    const t = walk / len
-    const decay = 1 - t * 0.7
-    const dev = (rng() - 0.5) * 2 * jitter * decay
-    const kink = (rng() - 0.5) * jitter * 0.22
-    pts.push([
-      ox + dx * walk + px * dev + dx * kink,
-      oy + dy * walk + py * dev + dy * kink,
-    ])
-  }
-  return {
-    d:   'M ' + pts.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' L '),
-    pts,
-  }
-}
-
-interface CrackMark { id: number; x: number; y: number; hitIndex: number; seed: number }
-
-function IceCrack({ x, y, hitIndex, seed }: { x: number; y: number; hitIndex: number; seed: number }) {
-  // Unique SVG element ID prefix (avoids gradient collisions between multiple cracks)
-  const uid = `ck${(x | 0)}${(y | 0)}h${hitIndex}`
-
-  const baseLen = 78 + hitIndex * 22
-  const maxR    = baseLen + 36
-  const vbSize  = (maxR + 20) * 2
-
-  const fractures = useMemo(() => {
-    const rng = makePRNG(seed * 7919 + hitIndex * 131)
-    const dominantAngle = -Math.PI / 2 + (rng() - 0.5) * 0.6
-    const oppositeAngle = dominantAngle + Math.PI + (rng() - 0.5) * 0.35
-    const sideAngles = [
-      dominantAngle - (0.8 + rng() * 0.4),
-      dominantAngle + (0.75 + rng() * 0.45),
-    ]
-
-    const mains = [
-      { angle: dominantAngle, len: baseLen * 1.15, width: 2.1 },
-      { angle: oppositeAngle, len: baseLen * 0.92, width: 1.7 },
-      { angle: sideAngles[0], len: baseLen * 0.8, width: 1.35 },
-      { angle: sideAngles[1], len: baseLen * 0.74, width: 1.2 },
-    ]
-
-    if (hitIndex >= 1) {
-      mains.push({
-        angle: oppositeAngle + (rng() - 0.5) * 0.9,
-        len: baseLen * 0.62,
-        width: 1.0,
-      })
-    }
-
-    return mains.map((entry, i) => {
-      const main = makeArm(0, 0, entry.angle, entry.len, 4 + hitIndex * 1.4, 6, rng)
-      const branchCount = i === 0 ? 2 : rng() > 0.4 ? 1 : 0
-      const branches = Array.from({ length: branchCount }, (_, bi) => {
-        const forkIdx = Math.min(
-          1 + Math.floor((0.28 + rng() * 0.42) * (main.pts.length - 1)),
-          main.pts.length - 1,
-        )
-        const [bx, by] = main.pts[forkIdx]
-        const bend = (bi === 0 ? 1 : -1) * (0.25 + rng() * 0.38)
-        return makeArm(
-          bx,
-          by,
-          entry.angle + bend,
-          entry.len * (0.22 + rng() * 0.2),
-          2.6 + hitIndex,
-          4,
-          rng,
-        )
-      })
-      return { main, branches, width: entry.width }
-    })
-  }, [baseLen, hitIndex, seed])
-
-  return (
-    <motion.div
-      initial={{ opacity: 0, scale: 0 }}
-      animate={{ opacity: 1, scale: 1 }}
-      exit={{ opacity: 0, scale: 1.18, transition: { duration: 0.42, ease: 'easeOut' } }}
-      transition={{ type: 'spring', visualDuration: 0.17, bounce: 0.50 }}
-      style={{
-        position: 'absolute', left: x, top: y,
-        transform: 'translate(-50%,-50%)',
-        pointerEvents: 'none', zIndex: 14,
-      }}
-    >
-      <svg
-        width={vbSize} height={vbSize}
-        viewBox={`${-maxR - 20} ${-maxR - 20} ${vbSize} ${vbSize}`}
-        style={{ display: 'block', overflow: 'visible' }}
-        aria-hidden
-      >
-        <defs>
-          <radialGradient id={`fade-${uid}`} cx="0" cy="0" r={maxR} gradientUnits="userSpaceOnUse">
-            <stop offset="0%"    stopColor="white" stopOpacity="0.9"/>
-            <stop offset="45%"   stopColor="white" stopOpacity="0.4"/>
-            <stop offset="100%"  stopColor="white" stopOpacity="0"/>
-          </radialGradient>
-          <radialGradient id={`void-${uid}`} cx="0" cy="0" r="18" gradientUnits="userSpaceOnUse">
-            <stop offset="0%"    stopColor="rgb(18,28,46)" stopOpacity="0.68"/>
-            <stop offset="38%"   stopColor="rgb(74,98,140)" stopOpacity="0.24"/>
-            <stop offset="100%"  stopColor="rgb(255,255,255)" stopOpacity="0"/>
-          </radialGradient>
-          <filter id={`glow-${uid}`} x="-120%" y="-120%" width="340%" height="340%">
-            <feGaussianBlur in="SourceGraphic" stdDeviation="0.9" result="b"/>
-            <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
-          </filter>
-        </defs>
-
-        {/* ── Layer 1: Main dark fracture body ─────────────── */}
-        {fractures.map(({ main, branches, width }, i) => (
-          <g key={`dk${i}`}>
-            <path
-              d={main.d}
-              stroke="rgba(52,66,90,0.58)"
-              strokeWidth={width}
-              fill="none"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-            {branches.map((branch, bi) => (
-              <path
-                key={bi}
-                d={branch.d}
-                stroke="rgba(78,94,120,0.46)"
-                strokeWidth={Math.max(0.55, width * 0.58)}
-                fill="none"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            ))}
-          </g>
-        ))}
-
-        {/* ── Layer 2: Hairline refraction edge ───────────── */}
-        <g filter={`url(#glow-${uid})`}>
-          {fractures.map(({ main, branches, width }, i) => (
-            <g key={`hi${i}`}>
-              <path d={main.d}
-                stroke={`url(#fade-${uid})`} strokeWidth={Math.max(0.42, width * 0.36)}
-                fill="none" strokeLinecap="round"/>
-              {branches.map((branch, bi) => (
-                <path key={bi}
-                  d={branch.d}
-                  stroke={`url(#fade-${uid})`} strokeWidth={Math.max(0.26, width * 0.2)}
-                  fill="none" strokeLinecap="round"/>
-              ))}
-            </g>
-          ))}
-        </g>
-
-        {/* ── Impact centre ────────────────────────────────── */}
-        <circle r="16" fill={`url(#void-${uid})`}/>
-        <motion.circle
-          r={9 + hitIndex * 2.5} fill="none"
-          stroke="rgba(210,226,245,0.30)" strokeWidth="0.7"
-          initial={{ scale: 0.2, opacity: 0 }}
-          animate={{ scale: 1, opacity: 1 }}
-          transition={{ delay: 0.04, duration: 0.18 }}
-        />
-        <circle r="2.8" fill="rgba(255,255,255,0.84)"/>
-
-        {/* ── Shockwave rings ──────────────────────────────── */}
-        <motion.circle r={0} fill="none"
-          stroke="rgba(214,230,245,0.28)" strokeWidth="0.8"
-          initial={{ r: 0, opacity: 0.58 }}
-          animate={{ r: 52 + hitIndex * 14, opacity: 0 }}
-          transition={{ duration: 0.42, ease: 'easeOut' }}
-        />
-      </svg>
-    </motion.div>
-  )
-}
 
 // ─── HELPERS ─────────────────────────────────────────────
 const inter = (w: number, s: number, lh: string, c: string, x?: CSSProperties): CSSProperties => ({
@@ -393,7 +199,8 @@ interface SlotProps {
   stage: Stage
   iceStage: IceStage
   showCardIce: boolean
-  cracks: CrackMark[]
+  wipeCanvas?: HTMLCanvasElement | null
+  onWipeMove?: (e: ReactPointerEvent<HTMLDivElement>) => void
   onCardUnfreezeComplete?: () => void
   onTap?: () => void
   wrapperRef: (el: HTMLDivElement | null) => void
@@ -402,8 +209,8 @@ interface SlotProps {
 }
 
 function CardSlot({
-  p, dragX, card, stage, iceStage, showCardIce, cracks,
-  onCardUnfreezeComplete, onTap, wrapperRef, shimmerRef, iceRef,
+  p, dragX, card, stage, iceStage, showCardIce, wipeCanvas,
+  onWipeMove, onCardUnfreezeComplete, onTap, wrapperRef, shimmerRef, iceRef,
 }: SlotProps) {
   const freezing = stage === 'freezing' && p === 0
   const canNavigate = stage === 'idle' || stage === 'frozen'
@@ -469,6 +276,7 @@ function CardSlot({
       <motion.div
         ref={iceRef}
         aria-hidden
+        onPointerMove={onWipeMove}
         animate={{ opacity: showCardIce ? 1 : 0 }}
         transition={{ duration: showCardIce ? 0.28 : 0.12, ease: 'easeOut' }}
         style={{
@@ -477,7 +285,8 @@ function CardSlot({
           clipPath: `inset(0 round ${CARD_BR}px)`,
           WebkitClipPath: `inset(0 round ${CARD_BR}px)`,
           boxShadow: 'inset 0 0 0 1px rgba(255,255,255,0.24)',
-          pointerEvents: 'none',
+          pointerEvents: onWipeMove ? 'auto' : 'none',
+          cursor: onWipeMove ? WIPE_CURSOR : 'default',
           zIndex: 6,
         }}
       >
@@ -505,12 +314,8 @@ function CardSlot({
           width={CARD_W}
           height={CARD_H}
           zIndex={2}
+          wipeCanvas={wipeCanvas}
         />
-        <AnimatePresence>
-          {showCardIce && cracks.map(c => (
-            <IceCrack key={c.id} x={c.x} y={c.y} hitIndex={c.hitIndex} seed={c.seed} />
-          ))}
-        </AnimatePresence>
       </motion.div>
 
       {/* Cold flash burst on freeze start — front card only */}
@@ -541,11 +346,15 @@ function CardSlot({
 
 // ─── MAIN COMPONENT ───────────────────────────────────────
 export default function CardFreeze() {
-  const [stage,     setStage]     = useState<Stage>('idle')
-  const [activeIdx, setActiveIdx] = useState(0)
-  const [cracks,    setCracks]    = useState<CrackMark[]>([])
-  const [hitCount,  setHitCount]  = useState(0)
+  const [stage,       setStage]       = useState<Stage>('idle')
+  const [activeIdx,   setActiveIdx]   = useState(0)
+  const [wipeCanvas,  setWipeCanvas]  = useState<HTMLCanvasElement | null>(null)
   const [frozenCardId, setFrozenCardId] = useState<string | null>(null)
+
+  // Wipe canvas refs — painted directly, no React re-render per stroke
+  const wipeCtxRef    = useRef<CanvasRenderingContext2D | null>(null)
+  const wipeCountRef  = useRef(0)   // paint call counter for coverage check throttle
+  const wipeDoneRef   = useRef(false) // guard: only trigger unfreeze once
 
   const dragX    = useMotionValue(0)
   const isDragging  = useRef(false)
@@ -559,7 +368,6 @@ export default function CardFreeze() {
   const shimmerRefs  = useRef<(HTMLDivElement | null)[]>([null, null, null])
   const quickX       = useRef<(gsap.QuickToFunc | null)[]>([null, null, null])
   const quickY       = useRef<(gsap.QuickToFunc | null)[]>([null, null, null])
-  const frontIceRef  = useRef<HTMLDivElement | null>(null)
 
   const reduced = useReducedMotion()
 
@@ -634,49 +442,71 @@ export default function CardFreeze() {
     shimmerRefs.current.forEach((sh: HTMLDivElement | null) => { if (sh) sh.style.opacity = '0' })
   }, [reduced])
 
-  // ── Break hit handler — must be before onPointerDown ─────
-  const hitCountRef = useRef(0)
-  const onBreakHit = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    const rect = frontIceRef.current?.getBoundingClientRect()
-    if (!rect) return
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const nextHit = hitCountRef.current
-    hitCountRef.current += 1
-
-    const seed = ((x * 73856093) ^ (y * 19349663) ^ ((nextHit + 1) * 83492791)) >>> 0
-    setCracks(prev => [...prev, { id: Date.now(), x, y, hitIndex: nextHit, seed }])
-    setHitCount(hitCountRef.current)
-
-    // Shake intensity grows with each hit
-    const shakeAmt = 4 + nextHit * 3
-    const el = frontIceRef.current ?? cardAreaRef.current
-    if (el) {
-      gsap.to(el, {
-        keyframes: [
-          { x: -shakeAmt, duration: 0.04 },
-          { x:  shakeAmt, duration: 0.04 },
-          { x: -shakeAmt * 0.6, duration: 0.04 },
-          { x:  shakeAmt * 0.6, duration: 0.04 },
-          { x: 0,          duration: 0.04 },
-        ],
-        ease: 'none',
-      })
+  // ── Wipe canvas init — recreate when entering breaking ────
+  useEffect(() => {
+    if (!breaking) {
+      wipeCtxRef.current  = null
+      wipeDoneRef.current = false
+      setWipeCanvas(null)
+      return
     }
+    const canvas = document.createElement('canvas')
+    canvas.width  = Math.ceil(CARD_W)
+    canvas.height = Math.ceil(CARD_H)
+    const ctx = canvas.getContext('2d')!
+    ctx.fillStyle = 'black'
+    ctx.fillRect(0, 0, canvas.width, canvas.height)
+    wipeCtxRef.current  = ctx
+    wipeCountRef.current = 0
+    wipeDoneRef.current  = false
+    setWipeCanvas(canvas)
+  }, [breaking])
 
-    if (hitCountRef.current >= HITS_TO_BREAK) {
-      setTimeout(() => {
-        setCracks([])
-        hitCountRef.current = 0
-        setHitCount(0)
-        setStage('unfreezing')
-      }, 140)
+  // ── Paint wipe trail ─────────────────────────────────────
+  const onWipeMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    const ctx = wipeCtxRef.current
+    if (!ctx || wipeDoneRef.current) return
+
+    const rect = e.currentTarget.getBoundingClientRect()
+    // Screen → card UV: card is rotated 90° CW, so u=sy, v=1-sx
+    const sx = (e.clientX - rect.left) / rect.width
+    const sy = (e.clientY - rect.top)  / rect.height
+    const cx = sy * CARD_W
+    const cy = (1 - sx) * CARD_H
+
+    // Soft radial gradient brush
+    const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, WIPE_BRUSH_R)
+    grad.addColorStop(0,    'rgba(255,255,255,1)')
+    grad.addColorStop(0.55, 'rgba(255,255,255,0.8)')
+    grad.addColorStop(1,    'rgba(255,255,255,0)')
+    ctx.fillStyle = grad
+    ctx.beginPath()
+    ctx.arc(cx, cy, WIPE_BRUSH_R, 0, Math.PI * 2)
+    ctx.fill()
+
+    // Check coverage every 8 strokes
+    wipeCountRef.current++
+    if (wipeCountRef.current % 8 === 0) {
+      const { width: W, height: H } = ctx.canvas
+      const data  = ctx.getImageData(0, 0, W, H).data
+      let white = 0
+      // Sample every 3rd pixel (stride 12 in RGBA) for speed
+      for (let i = 0; i < data.length; i += 12) {
+        if (data[i] > 80) white += 3
+      }
+      const coverage = white / (W * H)
+      if (coverage >= WIPE_THRESHOLD && !wipeDoneRef.current) {
+        wipeDoneRef.current = true
+        setTimeout(() => {
+          setWipeCanvas(null)
+          setStage('unfreezing')
+        }, 220)
+      }
     }
   }, [])
 
   // ── Pointer drag ─────────────────────────────────────────
   const onPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
-    if (breaking) { onBreakHit(e); return }
     if (wheelLocked) return
     snapAnim.current?.stop()
     e.currentTarget.setPointerCapture(e.pointerId)
@@ -684,7 +514,7 @@ export default function CardFreeze() {
     velRef.current   = 0
     lastXRef.current = e.clientX
     lastTRef.current = performance.now()
-  }, [breaking, onBreakHit, wheelLocked])
+  }, [wheelLocked, dragX])
 
   const onPointerMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     if (!isDragging.current) return
@@ -770,7 +600,7 @@ export default function CardFreeze() {
             height: CARD_AREA_H,
             overflow: 'hidden',
             background: '#ffffff',
-            cursor: breaking ? HAMMER_CURSOR : wheelLocked ? 'default' : isDragging.current ? 'grabbing' : 'grab',
+            cursor: wheelLocked ? 'default' : isDragging.current ? 'grabbing' : 'grab',
             userSelect: 'none',
             WebkitUserSelect: 'none',
             touchAction: 'none',
@@ -788,19 +618,20 @@ export default function CardFreeze() {
                 stage={stage}
                 iceStage={iceStage}
                 showCardIce={slotCard.id === frozenCardId && iceStage !== 'idle'}
-                cracks={slotCard.id === frozenCardId ? cracks : []}
+                wipeCanvas={slotCard.id === frozenCardId && breaking ? wipeCanvas : null}
+                onWipeMove={slotCard.id === frozenCardId && breaking ? onWipeMove : undefined}
                 onCardUnfreezeComplete={slotCard.id === frozenCardId ? onUnfreezeComplete : undefined}
                 onTap={() => advanceTo(p)}
                 wrapperRef={el => { wrapperRefs.current[slotIdx] = el }}
                 shimmerRef={el => { shimmerRefs.current[slotIdx] = el }}
-                iceRef={slotCard.id === frozenCardId ? (el => { frontIceRef.current = el }) : undefined}
+                iceRef={undefined}
               />
             )
           })}
 
           {/* ── "Tap to break" hint — fades after first hit ── */}
           <AnimatePresence>
-            {breaking && hitCount === 0 && (
+            {breaking && (
               <motion.div
                 key="tap-hint"
                 initial={{ opacity: 0, y: 6 }}
@@ -818,7 +649,7 @@ export default function CardFreeze() {
                 }}
               >
                 <p style={inter(500, 12, '18px', 'rgba(255,255,255,0.88)', { letterSpacing: '0.02em' })}>
-                  Tap the ice to break it
+                  Swipe the card to clear the ice
                 </p>
               </motion.div>
             )}
@@ -833,13 +664,12 @@ export default function CardFreeze() {
           <motion.button
             onClick={() => {
               if (idle || (frozen && !isActiveCardFrozen)) {
-                setCracks([])
-                hitCountRef.current = 0
-                setHitCount(0)
                 setFrozenCardId(activeCard.id)
                 setStage('freezing')
               }
-              if (frozen && isActiveCardFrozen) setStage('breaking')
+              if (frozen && isActiveCardFrozen) {
+                setStage('breaking')
+              }
             }}
             disabled={freezing || breaking || unfreezing}
             whileTap={!freezing && !unfreezing ? { scale: 0.974 } : undefined}
@@ -918,7 +748,7 @@ export default function CardFreeze() {
                 {freezing   && 'Freezing…'}
                 {frozen && isActiveCardFrozen && `Unfreeze ${activeCard.label} card`}
                 {frozen && !isActiveCardFrozen && `Freeze ${activeCard.label} card`}
-                {breaking   && `${HITS_TO_BREAK - hitCount} hit${HITS_TO_BREAK - hitCount !== 1 ? 's' : ''} to break`}
+                {breaking   && 'Breaking…'}
                 {unfreezing && 'Unfreezing…'}
               </motion.span>
             </AnimatePresence>

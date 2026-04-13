@@ -485,8 +485,10 @@ export default function CardFreeze() {
   }, [breaking])
 
   // ── Defrost audio ────────────────────────────────────
-  // Audio element is created eagerly; sound starts/stops inside onWipeMove
-  // so it is always triggered by an active pointer gesture (satisfies autoplay policy).
+  // ── Defrost audio ────────────────────────────────────
+  // Global pointerdown starts the sound (pointerdown IS a valid autoplay gesture;
+  // pointermove is NOT — that's why in-move play() was silently rejected).
+  // Global pointerup/cancel stops it. Both bypass CSS pointer-events entirely.
   useEffect(() => {
     if (!breaking) {
       if (audioRef.current) {
@@ -496,45 +498,40 @@ export default function CardFreeze() {
       }
       return
     }
+
     const audio = new Audio('/defrost.wav')
     audio.loop    = true
     audio.volume  = 0.72
     audio.preload = 'auto'
     audioRef.current = audio
+
+    const start = () => {
+      if (audio.paused) audio.play().catch(() => {})
+    }
+    const stop = () => {
+      if (!audio.paused) {
+        audio.pause()
+        audio.currentTime = 0
+      }
+    }
+
+    document.addEventListener('pointerdown',   start)
+    document.addEventListener('pointerup',     stop)
+    document.addEventListener('pointercancel', stop)
+
     return () => {
+      document.removeEventListener('pointerdown',   start)
+      document.removeEventListener('pointerup',     stop)
+      document.removeEventListener('pointercancel', stop)
       audio.pause()
       audioRef.current = null
     }
   }, [breaking])
 
-  // Stop sound when pointer is released anywhere on the page
-  useEffect(() => {
-    const stop = () => {
-      const audio = audioRef.current
-      if (!audio || audio.paused) return
-      audio.pause()
-      audio.currentTime = 0
-    }
-    document.addEventListener('pointerup',     stop)
-    document.addEventListener('pointercancel', stop)
-    return () => {
-      document.removeEventListener('pointerup',     stop)
-      document.removeEventListener('pointercancel', stop)
-    }
-  }, [])
-
   // ── Paint wipe trail ─────────────────────────────────
   const onWipeMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     const ctx = wipeCtxRef.current
     if (!ctx || wipeDoneRef.current) return
-
-    // Start sound on first active stroke (pointer must be pressed: e.buttons > 0)
-    if (e.buttons > 0) {
-      const audio = audioRef.current
-      if (audio && audio.paused) {
-        audio.play().catch(() => {})
-      }
-    }
 
     const rect = e.currentTarget.getBoundingClientRect()
     // Screen → card UV: card is rotated 90° CW, so u=sy, v=1−sx

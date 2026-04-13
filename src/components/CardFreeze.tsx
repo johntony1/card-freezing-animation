@@ -66,11 +66,12 @@ const BASE_TOP  = CENTER_Y - CARD_H / 2
 
 // ─── DEPTH CONFIG ─────────────────────────────────────────
 //  pos 0 = front  pos 1 = mid  pos 2 = back
-const DEPTH = [
+type DepthLevel = { scale: number; y: number; x: number; rotate: number; opacity: number; zi: number }
+const DEPTH: DepthLevel[] = [
   { scale: 1.22, y: 0,  x: 0,   rotate: CARD_ROT,     opacity: 1.00, zi: 10 },
   { scale: 1.08, y: 18, x: -10, rotate: CARD_ROT - 9,  opacity: 0.78, zi: 5  },
   { scale: 0.96, y: 34, x: 10,  rotate: CARD_ROT + 9,  opacity: 0.55, zi: 1  },
-] as const
+]
 
 // ─── SPRING CONFIGS ───────────────────────────────────────
 const SPR_FRONT = { type: 'spring' as const, stiffness: 340, damping: 32, mass: 1.0 }

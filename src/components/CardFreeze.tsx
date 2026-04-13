@@ -652,19 +652,21 @@ export default function CardFreeze() {
         </div>
 
         {/* ── Nav arrows — outside card area, siblings of card stack ── */}
-        {([{ dir: -1 as const, left: 18 }, { dir: 1 as const, left: 340 }] as const).map(({ dir, left }) => (
+        {/* 44×44 touch target centred at same visual position as the old 32×32 */}
+        {([{ dir: -1 as const, left: 12 }, { dir: 1 as const, left: 334 }] as const).map(({ dir, left }) => (
           <motion.button
             key={dir}
             aria-label={dir === -1 ? 'Previous card' : 'Next card'}
             onClick={() => advance(dir)}
             disabled={wheelLocked}
+            whileHover={!wheelLocked && !reduced ? { scale: 1.10 } : undefined}
             whileTap={{ scale: 0.88 }}
             transition={{ type: 'spring', stiffness: 700, damping: 38 }}
             style={{
               position:  'absolute',
-              top:       CENTER_Y - 16,
+              top:       CENTER_Y - 22,
               left,
-              width: 32, height: 32,
+              width: 44, height: 44,
               borderRadius: '50%',
               border:       'none',
               background:   'rgba(255,255,255,0.82)',
@@ -678,21 +680,20 @@ export default function CardFreeze() {
               opacity:   wheelLocked ? 0.38 : 1,
               transition: 'opacity 0.2s ease',
               zIndex:    20,
-              outline:   'none',
               WebkitTapHighlightColor: 'transparent',
             }}
           >
             <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden>
               {dir === -1
-                ? <path d="M8.5 2.5 L4 7 L8.5 11.5" stroke="#333" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
-                : <path d="M5.5 2.5 L10 7 L5.5 11.5" stroke="#333" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                ? <path d="M8.5 2.5 L4 7 L8.5 11.5" stroke="#444" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
+                : <path d="M5.5 2.5 L10 7 L5.5 11.5" stroke="#444" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"/>
               }
             </svg>
           </motion.button>
         ))}
 
-        {/* ── Divider ───────────────────────────────────── */}
-        <div style={{ height: 1, background: 'rgba(0,0,0,0.06)' }} />
+        {/* ── Divider — 0.5px hairline on retina ───────── */}
+        <div style={{ height: '0.5px', background: 'rgba(0,0,0,0.08)' }} />
 
         {/* ── CTA bar ───────────────────────────────────── */}
         <div style={{ padding: '14px 16px 20px' }}>
@@ -707,6 +708,7 @@ export default function CardFreeze() {
               }
             }}
             disabled={freezing || breaking || unfreezing}
+            whileHover={!wheelLocked && !reduced ? { scale: 1.008 } : undefined}
             whileTap={!freezing && !unfreezing ? { scale: 0.974 } : undefined}
             transition={{ type: 'spring', stiffness: 700, damping: 42 }}
             style={{
@@ -717,7 +719,6 @@ export default function CardFreeze() {
               justifyContent: 'center',
               gap:    8,
               cursor: (freezing || unfreezing) ? 'default' : 'pointer',
-              outline: 'none',
               WebkitTapHighlightColor: 'transparent',
               border: 'none',
               background: ((frozen && isActiveCardFrozen) || breaking)
@@ -746,12 +747,22 @@ export default function CardFreeze() {
                   animate={{ opacity: 1, rotate: 0, scale: 1 }}
                   exit={{ opacity: 0, rotate: 60, scale: 0.7 }}
                   transition={{ duration: 0.18 }}
+                  style={{ display: 'flex' }}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <circle cx="12" cy="12" r="4.5" stroke="#5c5c5c" strokeWidth="1.9" />
-                    <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"
-                      stroke="#5c5c5c" strokeWidth="1.9" strokeLinecap="round" />
-                  </svg>
+                  {/* Sun spins continuously while defrosting/unfreezing */}
+                  <motion.span
+                    animate={(breaking || unfreezing) ? { rotate: 360 } : { rotate: 0 }}
+                    transition={(breaking || unfreezing)
+                      ? { repeat: Infinity, duration: 2.4, ease: 'linear' }
+                      : { duration: 0 }}
+                    style={{ display: 'flex' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <circle cx="12" cy="12" r="4.5" stroke="#5c5c5c" strokeWidth="1.9" />
+                      <path d="M12 2v3M12 19v3M2 12h3M19 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"
+                        stroke="#5c5c5c" strokeWidth="1.9" strokeLinecap="round" />
+                    </svg>
+                  </motion.span>
                 </motion.span>
               ) : (
                 <motion.span key="snow"
@@ -759,12 +770,22 @@ export default function CardFreeze() {
                   animate={{ opacity: 1, rotate: 0, scale: 1 }}
                   exit={{ opacity: 0, rotate: -60, scale: 0.7 }}
                   transition={{ duration: 0.18 }}
+                  style={{ display: 'flex' }}
                 >
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
-                    <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"
-                      stroke="white" strokeWidth="1.9" strokeLinecap="round" />
-                    <circle cx="12" cy="12" r="2" fill="none" stroke="white" strokeWidth="1.6" />
-                  </svg>
+                  {/* Snowflake spins continuously while freezing */}
+                  <motion.span
+                    animate={freezing ? { rotate: 360 } : { rotate: 0 }}
+                    transition={freezing
+                      ? { repeat: Infinity, duration: 2.4, ease: 'linear' }
+                      : { duration: 0 }}
+                    style={{ display: 'flex' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden>
+                      <path d="M12 3v18M3 12h18M5.6 5.6l12.8 12.8M18.4 5.6 5.6 18.4"
+                        stroke="white" strokeWidth="1.9" strokeLinecap="round" />
+                      <circle cx="12" cy="12" r="2" fill="none" stroke="white" strokeWidth="1.6" />
+                    </svg>
+                  </motion.span>
                 </motion.span>
               )}
             </AnimatePresence>

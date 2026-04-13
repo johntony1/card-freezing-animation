@@ -202,11 +202,10 @@ interface SlotProps {
   showCardIce: boolean
   wipeCanvas?: HTMLCanvasElement | null
   onWipeMove?:            (e: ReactPointerEvent<HTMLDivElement>) => void
-  onWipeStart?:           () => void
   onCardUnfreezeComplete?: () => void
 }
 
-function CardSlot({ pos, card, stage, iceStage, showCardIce, wipeCanvas, onWipeMove, onWipeStart, onCardUnfreezeComplete }: SlotProps) {
+function CardSlot({ pos, card, stage, iceStage, showCardIce, wipeCanvas, onWipeMove, onCardUnfreezeComplete }: SlotProps) {
   const isFront     = pos === 0
   const freezing    = stage === 'freezing' && isFront
   const canNavigate = stage === 'idle' || stage === 'frozen'
@@ -351,7 +350,6 @@ function CardSlot({ pos, card, stage, iceStage, showCardIce, wipeCanvas, onWipeM
       {/* ── Ice overlay ────────────────────────────────── */}
       <motion.div
         aria-hidden
-        onPointerDown={onWipeStart}
         onPointerMove={onWipeMove}
         animate={{ opacity: showCardIce ? 1 : 0 }}
         transition={{ duration: showCardIce ? 0.28 : 0.12, ease: 'easeOut' }}
@@ -486,7 +484,9 @@ export default function CardFreeze() {
     setWipeCanvas(canvas)
   }, [breaking])
 
-  // ── Defrost audio — preload when entering breaking ────
+  // ── Defrost audio ────────────────────────────────────
+  // Audio element is created eagerly; sound starts/stops inside onWipeMove
+  // so it is always triggered by an active pointer gesture (satisfies autoplay policy).
   useEffect(() => {
     if (!breaking) {
       if (audioRef.current) {
@@ -507,36 +507,34 @@ export default function CardFreeze() {
     }
   }, [breaking])
 
-  // Start sound on pointer down — check paused so rapid strokes don't restart
-  const onWipeStart = useCallback(() => {
-    const audio = audioRef.current
-    if (!audio || !audio.paused) return
-    audio.play().catch(() => {})
-  }, [])
-
-  // Stop sound — called from document pointerup (see useEffect below)
-  const onWipeEnd = useCallback(() => {
-    const audio = audioRef.current
-    if (!audio || audio.paused) return
-    audio.pause()
-    audio.currentTime = 0
-  }, [])
-
-  // Global pointerup so sound stops even if finger releases outside the card
+  // Stop sound when pointer is released anywhere on the page
   useEffect(() => {
-    const handler = () => onWipeEnd()
-    document.addEventListener('pointerup',     handler)
-    document.addEventListener('pointercancel', handler)
-    return () => {
-      document.removeEventListener('pointerup',     handler)
-      document.removeEventListener('pointercancel', handler)
+    const stop = () => {
+      const audio = audioRef.current
+      if (!audio || audio.paused) return
+      audio.pause()
+      audio.currentTime = 0
     }
-  }, [onWipeEnd])
+    document.addEventListener('pointerup',     stop)
+    document.addEventListener('pointercancel', stop)
+    return () => {
+      document.removeEventListener('pointerup',     stop)
+      document.removeEventListener('pointercancel', stop)
+    }
+  }, [])
 
   // ── Paint wipe trail ─────────────────────────────────
   const onWipeMove = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     const ctx = wipeCtxRef.current
     if (!ctx || wipeDoneRef.current) return
+
+    // Start sound on first active stroke (pointer must be pressed: e.buttons > 0)
+    if (e.buttons > 0) {
+      const audio = audioRef.current
+      if (audio && audio.paused) {
+        audio.play().catch(() => {})
+      }
+    }
 
     const rect = e.currentTarget.getBoundingClientRect()
     // Screen → card UV: card is rotated 90° CW, so u=sy, v=1−sx
@@ -566,7 +564,6 @@ export default function CardFreeze() {
       const coverage = white / (W * H)
       if (coverage >= WIPE_THRESHOLD && !wipeDoneRef.current) {
         wipeDoneRef.current = true
-        // Stop sound as ice finishes clearing
         if (audioRef.current) {
           audioRef.current.pause()
           audioRef.current.currentTime = 0
@@ -649,7 +646,6 @@ export default function CardFreeze() {
                 showCardIce={card.id === frozenCardId && iceStage !== 'idle'}
                 wipeCanvas={card.id === frozenCardId && breaking ? wipeCanvas : null}
                 onWipeMove={card.id === frozenCardId && breaking ? onWipeMove   : undefined}
-                onWipeStart={card.id === frozenCardId && breaking ? onWipeStart : undefined}
                 onCardUnfreezeComplete={card.id === frozenCardId ? onUnfreezeComplete : undefined}
               />
             )

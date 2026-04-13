@@ -79,7 +79,7 @@ const SPR_BACK  = { type: 'spring' as const, stiffness: 240, damping: 28, mass: 
 
 // ─── WIPE CONFIG ──────────────────────────────────────────
 const WIPE_BRUSH_R   = 44
-const WIPE_THRESHOLD = 0.90
+const WIPE_THRESHOLD = 0.95
 
 const WIPE_CURSOR = (() => {
   const svg = encodeURIComponent(
@@ -613,9 +613,9 @@ export default function CardFreeze() {
       lastPtRef.current = { x: px, y: py }
     }
 
-    // Check coverage every 8 strokes
+    // Check coverage every 4 strokes
     wipeCountRef.current++
-    if (wipeCountRef.current % 8 === 0) {
+    if (wipeCountRef.current % 4 === 0) {
       const { width: W, height: H } = ctx.canvas
       const data  = ctx.getImageData(0, 0, W, H).data
       let white = 0

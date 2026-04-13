@@ -500,13 +500,14 @@ export default function CardFreeze() {
     }
 
     const audio = new Audio('/defrost.wav')
-    audio.loop    = true
     audio.volume  = 0.72
     audio.preload = 'auto'
     audioRef.current = audio
 
     const start = () => {
-      if (audio.paused) audio.play().catch(() => {})
+      // Reset to beginning every wipe so each stroke plays fresh
+      audio.currentTime = 0
+      audio.play().catch(() => {})
     }
     const stop = () => {
       if (!audio.paused) {
